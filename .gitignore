@@ -1,0 +1,21 @@
+# Datasets and images
+data/
+*.jpg
+*.png
+*.jpeg
+
+# Virtual Environments
+venv/
+env/
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+
+# IDEs
+.vscode/
+.idea/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
