@@ -1,8 +1,21 @@
 # Datasets and images
 data/
+dataset/
 *.jpg
 *.png
 *.jpeg
+
+# Model weights and checkpoints (CRUCIAL for AI/FL projects)
+models/
+*.pth
+*.pt
+*.h5
+*.keras
+*.ckpt
+
+# Training logs
+logs/
+*.log
 
 # Virtual Environments
 venv/
@@ -19,3 +32,7 @@ __pycache__/
 
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints/
+
+# OS generated files
+.DS_Store
+Thumbs.db
