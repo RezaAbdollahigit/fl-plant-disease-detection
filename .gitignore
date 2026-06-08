@@ -5,8 +5,9 @@ dataset/
 *.png
 *.jpeg
 
-# Model weights and checkpoints (CRUCIAL for AI/FL projects)
-models/
+# Model weights and checkpoints
+checkpoints/
+results/
 *.pth
 *.pt
 *.h5
