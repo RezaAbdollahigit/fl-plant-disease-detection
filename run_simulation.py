@@ -7,8 +7,8 @@ from models.mobilenet import get_mobilenet
 # ==========================================
 # ⚙️ SIMULATION CONFIGURATION ⚙️
 # ==========================================
-# ALGORITHM = "FedProx"  # Options: "FedAvg" or "FedProx"
-ALGORITHM = "FedAvg"  # Options: "FedAvg" or "FedProx"
+ALGORITHM = "FedProx"  # Options: "FedAvg" or "FedProx"
+# ALGORITHM = "FedAvg"  # Options: "FedAvg" or "FedProx"
 PROXIMAL_MU = 0.1      # Only used if ALGORITHM is "FedProx"
 NUM_CLIENTS = 5
 NUM_ROUNDS = 3
