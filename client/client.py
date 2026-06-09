@@ -5,11 +5,12 @@ import torch.optim as optim
 from collections import OrderedDict
 
 class PlantClient(fl.client.NumPyClient):
-    def __init__(self, model, trainloader, valloader, device):
+    def __init__(self, model, trainloader, valloader, device, mu=0.0):
         self.model = model
         self.trainloader = trainloader
         self.valloader = valloader
         self.device = device
+        self.mu = mu  # 0.0 = FedAvg | > 0.0 = FedProx
         self.criterion = nn.CrossEntropyLoss()
 
     def get_parameters(self, config):
@@ -23,8 +24,12 @@ class PlantClient(fl.client.NumPyClient):
         self.model.load_state_dict(state_dict, strict=True)
 
     def fit(self, parameters, config):
-        """Trains the model locally on the edge device."""
+        """Trains the model locally."""
         self.set_parameters(parameters)
+        
+        # Save a frozen copy of the global weights (Needed for FedProx)
+        global_weights = [param.clone().detach() for param in self.model.parameters()]
+        
         self.model.to(self.device)
         self.model.train()
         
@@ -34,7 +39,20 @@ class PlantClient(fl.client.NumPyClient):
         for images, labels in self.trainloader:
             images, labels = images.to(self.device), labels.to(self.device)
             optimizer.zero_grad()
-            loss = self.criterion(self.model(images), labels)
+            
+            # Standard Cross Entropy Loss
+            outputs = self.model(images)
+            loss = self.criterion(outputs, labels)
+            
+            # --- FEDPROX PENALTY (Only applies if mu > 0) ---
+            if self.mu > 0.0:
+                proximal_term = 0.0
+                for local_param, global_param in zip(self.model.parameters(), global_weights):
+                    proximal_term += ((local_param - global_param.to(self.device)) ** 2).sum()
+                
+                loss += (self.mu / 2) * proximal_term
+            # ------------------------------------------------
+            
             loss.backward()
             optimizer.step()
             
