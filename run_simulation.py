@@ -11,8 +11,8 @@ from models.mobilenet import get_mobilenet
 # ==========================================
 # ⚙️ SIMULATION CONFIGURATION ⚙️
 # ==========================================
-ALGORITHM = "FedAvg"   # Other option "FedProx" !
-# ALGORITHM = "FedProx"   # Other option "FedAvg" !
+# ALGORITHM = "FedAvg"   # Other option "FedProx" !
+ALGORITHM = "FedProx"   # Other option "FedAvg" !
 PROXIMAL_MU = 0.1      # Only used if ALGORITHM is "FedProx"
 NUM_CLIENTS = 5
 NUM_ROUNDS = 25        # Increased to 25 so the models actually learn!
