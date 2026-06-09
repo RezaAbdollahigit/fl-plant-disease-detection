@@ -1,13 +1,11 @@
 import os
 import torch
 from torchvision import datasets, transforms
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader, random_split, Subset
+import numpy as np
 
 def get_transforms():
-    """
-    Standard image transformations required for pre-trained models
-    like MobileNetV2 and EfficientNet.
-    """
+    """Standard image transformations for MobileNetV2."""
     return transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
@@ -18,15 +16,12 @@ def get_transforms():
     ])
 
 def load_centralized_data(data_dir='data/PlantVillage', batch_size=32, train_split=0.8):
-    """
-    Loads the dataset for testing a standard, centralized baseline model.
-    """
+    """Loads and shuffles the full dataset for centralized baseline training."""
     if not os.path.exists(data_dir):
         raise FileNotFoundError(f"Dataset not found at {data_dir}. Please check your path.")
 
     dataset = datasets.ImageFolder(root=data_dir, transform=get_transforms())
     
-    # Split into Train and Validation
     train_size = int(train_split * len(dataset))
     val_size = len(dataset) - train_size
     train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
@@ -36,39 +31,63 @@ def load_centralized_data(data_dir='data/PlantVillage', batch_size=32, train_spl
 
     return train_loader, val_loader, dataset.classes
 
-def load_federated_data(data_dir='data/PlantVillage', num_clients=5, batch_size=32):
+def load_federated_data(data_dir='data/PlantVillage', num_clients=5, batch_size=32, iid=False):
     """
-    Partitions the training dataset into IID slices for Federated Learning clients.
-    Returns a list of train_loaders, one for each client, and a global val_loader.
+    Partitions the dataset for Federated Learning.
+    If iid=True: Random uniform split (Easy Mode).
+    If iid=False: Non-IID split where each client gets entirely different diseases (Hard Mode).
     """
     train_loader, val_loader, classes = load_centralized_data(data_dir, batch_size=batch_size)
     
-    # Get the raw training dataset from the centralized loader
-    train_dataset = train_loader.dataset
+    # We extract the underlying base dataset and the specific training indices
+    base_dataset = train_loader.dataset.dataset
+    train_indices = train_loader.dataset.indices
     
-    # Calculate partition sizes
-    partition_size = len(train_dataset) // num_clients
-    lengths = [partition_size] * num_clients
-    lengths[-1] += len(train_dataset) % num_clients # Add remainder to last client
-    
-    # Split the dataset
-    client_datasets = random_split(train_dataset, lengths)
-    
-    # Create a DataLoader for each client
     client_loaders = []
-    for ds in client_datasets:
-        client_loaders.append(DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=2))
+
+    if iid:
+        print("Dataset Mode: IID (Uniform distribution)")
+        partition_size = len(train_indices) // num_clients
+        lengths = [partition_size] * num_clients
+        lengths[-1] += len(train_indices) % num_clients
+        client_datasets = random_split(train_loader.dataset, lengths)
         
+        for ds in client_datasets:
+            client_loaders.append(DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=2))
+            
+    else:
+        print("Dataset Mode: Non-IID (Heterogeneous label distribution)")
+        # 1. Map each class to the training images that belong to it
+        class_to_indices = {i: [] for i in range(len(classes))}
+        for idx in train_indices:
+            label = base_dataset.targets[idx]
+            class_to_indices[label].append(idx)
+            
+        # 2. Assign exactly 3 distinct disease classes to each of the 5 clients
+        classes_per_client = len(classes) // num_clients
+        
+        for i in range(num_clients):
+            client_specific_indices = []
+            assigned_classes = range(i * classes_per_client, (i + 1) * classes_per_client)
+            
+            for c in assigned_classes:
+                client_specific_indices.extend(class_to_indices[c])
+                
+            # Create a localized dataset just for this client
+            client_ds = Subset(base_dataset, client_specific_indices)
+            client_loaders.append(DataLoader(client_ds, batch_size=batch_size, shuffle=True, num_workers=2))
+
     return client_loaders, val_loader, classes
 
 if __name__ == "__main__":
-    # Quick test to ensure everything works when you run this script directly
-    print("Testing Centralized DataLoader...")
-    train, val, classes = load_centralized_data()
-    print(f"Classes found: {len(classes)}")
-    print(f"Train batches: {len(train)} | Val batches: {len(val)}")
+    # Test the new Non-IID distribution logic
+    print("Testing Non-IID Federated Partitions...")
+    client_loaders, _, classes = load_federated_data(num_clients=5, iid=False)
     
-    print("\nTesting Federated Partitions...")
-    client_loaders, global_val, _ = load_federated_data(num_clients=5)
+    print("\n--- Client Data Distribution ---")
     for i, loader in enumerate(client_loaders):
-        print(f"Client {i+1} has {len(loader.dataset)} images.")
+        # Extract labels to prove the Non-IID setup works
+        labels = [loader.dataset.dataset.targets[idx] for idx in loader.dataset.indices]
+        unique_classes = np.unique(labels)
+        class_names = [classes[c] for c in unique_classes]
+        print(f"Client {i+1} has {len(loader.dataset)} images handling diseases: {class_names}")
