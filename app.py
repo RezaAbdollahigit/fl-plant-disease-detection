@@ -21,19 +21,21 @@ class GradCAM:
         # MobileNetV2's final convolutional block
         target_layer = self.model.features[-1]
         
-        # Register the hooks
-        target_layer.register_forward_hook(self.save_activation)
-        target_layer.register_backward_hook(self.save_gradient)
+        # Register the hooks and keep handles so we can safely remove them later
+        self.forward_handle = target_layer.register_forward_hook(self.save_activation)
+        self.backward_handle = target_layer.register_full_backward_hook(self.save_gradient)
 
     def save_activation(self, module, input, output):
-        self.activations = output
+        self.activations = output.clone().detach()
 
     def save_gradient(self, module, grad_input, grad_output):
-        self.gradients = grad_output[0]
+        self.gradients = grad_output[0].clone().detach()
 
     def generate_heatmap(self, input_tensor, target_class):
         self.model.zero_grad()
-        input_tensor.requires_grad_(True)
+        
+        # Safely request gradients without modifying the original tensor in-place
+        input_tensor = input_tensor.clone().detach().requires_grad_(True)
         
         output = self.model(input_tensor)
         target = output[0][target_class]
@@ -41,13 +43,26 @@ class GradCAM:
 
         # Mathematically multiply the gradients by the feature maps
         pooled_gradients = torch.mean(self.gradients, dim=[0, 2, 3])
-        for i in range(self.activations.shape[1]):
-            self.activations[:, i, :, :] *= pooled_gradients[i]
+        
+        # Clone to avoid in-place modification of computation graph tensors
+        activations = self.activations.clone()
+        for i in range(activations.shape[1]):
+            activations[:, i, :, :] *= pooled_gradients[i]
             
-        heatmap = torch.mean(self.activations, dim=1).squeeze()
+        heatmap = torch.mean(activations, dim=1).squeeze()
         heatmap = torch.relu(heatmap)
-        heatmap /= torch.max(heatmap)
+        
+        # Prevent division by zero
+        max_val = torch.max(heatmap)
+        if max_val > 0:
+            heatmap /= max_val
+            
         return heatmap.cpu().detach().numpy()
+
+    def remove_hooks(self):
+        """Clean up hooks to prevent memory leaks during multiple UI inferences."""
+        self.forward_handle.remove()
+        self.backward_handle.remove()
 
 # ==========================================
 # 1. Dataset Classes
@@ -131,10 +146,14 @@ def get_prediction(model, tensor, original_image=None, use_gradcam=False):
     if use_gradcam and original_image is not None:
         cam = GradCAM(model)
         heatmap = cam.generate_heatmap(tensor, predicted_idx.item())
+        cam.remove_hooks() # Prevent PyTorch hook accumulation
         
         heatmap = cv2.resize(heatmap, (original_image.width, original_image.height))
         heatmap = np.uint8(255 * heatmap)
+        
+        # OpenCV uses BGR, but PIL uses RGB. We must convert colors!
         heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
+        heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
         
         original_np = np.array(original_image)
         superimposed_img = cv2.addWeighted(original_np, 0.5, heatmap, 0.5, 0)
