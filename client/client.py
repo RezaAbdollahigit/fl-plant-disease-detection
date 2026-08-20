@@ -3,63 +3,76 @@ import flwr as fl
 import torch.nn as nn
 import torch.optim as optim
 from collections import OrderedDict
+from tqdm import tqdm
+import random
 
 class PlantClient(fl.client.NumPyClient):
-    def __init__(self, model, trainloader, valloader, device, mu=0.0):
+    def __init__(self, model, trainloader, valloader, device, mu=0.0, dp_noise=0.0):
         self.model = model
         self.trainloader = trainloader
         self.valloader = valloader
         self.device = device
-        self.mu = mu  # 0.0 = FedAvg | > 0.0 = FedProx
+        self.mu = mu          
+        self.dp_noise = dp_noise  
         self.criterion = nn.CrossEntropyLoss()
 
     def get_parameters(self, config):
-        """Extracts the model's weights to send to the server."""
         return [val.cpu().numpy() for _, val in self.model.state_dict().items()]
 
     def set_parameters(self, parameters):
-        """Receives global weights from the server and applies them locally."""
         params_dict = zip(self.model.state_dict().keys(), parameters)
         state_dict = OrderedDict({k: torch.tensor(v) for k, v in params_dict})
         self.model.load_state_dict(state_dict, strict=True)
 
     def fit(self, parameters, config):
-        """Trains the model locally."""
         self.set_parameters(parameters)
-        
-        # Save a frozen copy of the global weights (Needed for FedProx)
         global_weights = [param.clone().detach() for param in self.model.parameters()]
         
         self.model.to(self.device)
         self.model.train()
-        
         optimizer = optim.Adam(self.model.parameters(), lr=0.001)
         
-        # Train for 1 local epoch per federated round
-        for images, labels in self.trainloader:
+        # 🌪️ Edge Simulation: 20% chance of hardware/straggler failure
+        if random.random() < 0.2:
+            work_fraction = random.uniform(0.1, 0.4) 
+        else:
+            work_fraction = 1.0 
+            
+        max_batches = max(1, int(len(self.trainloader) * work_fraction))
+        progress_bar = tqdm(self.trainloader, desc=f"Client Local Training (Work: {int(work_fraction*100)}%)", leave=False)
+        
+        for i, (images, labels) in enumerate(progress_bar):
+            if i >= max_batches:
+                break
+                
             images, labels = images.to(self.device), labels.to(self.device)
             optimizer.zero_grad()
             
-            # Standard Cross Entropy Loss
             outputs = self.model(images)
             loss = self.criterion(outputs, labels)
             
-            # --- FEDPROX PENALTY (Only applies if mu > 0) ---
             if self.mu > 0.0:
                 proximal_term = 0.0
                 for local_param, global_param in zip(self.model.parameters(), global_weights):
                     proximal_term += ((local_param - global_param.to(self.device)) ** 2).sum()
-                
                 loss += (self.mu / 2) * proximal_term
-            # ------------------------------------------------
             
             loss.backward()
-            optimizer.step()
+
+            if self.dp_noise > 0.0:
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                for param in self.model.parameters():
+                    if param.grad is not None:
+                        noise = torch.normal(mean=0.0, std=self.dp_noise, size=param.grad.shape).to(self.device)
+                        param.grad += noise
             
-        return self.get_parameters(config={}), len(self.trainloader.dataset), {}
+            optimizer.step()
+            progress_bar.set_postfix(loss=f"{loss.item():.4f}")
+            
+        actual_samples_processed = max_batches * self.trainloader.batch_size
+        return self.get_parameters(config={}), actual_samples_processed, {}
 
     def evaluate(self, parameters, config):
-        """Evaluates the global model using local validation data."""
         self.set_parameters(parameters)
         self.model.to(self.device)
         self.model.eval()

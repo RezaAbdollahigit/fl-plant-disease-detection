@@ -31,15 +31,14 @@ def load_centralized_data(data_dir='data/PlantVillage', batch_size=32, train_spl
 
     return train_loader, val_loader, dataset.classes
 
-def load_federated_data(data_dir='data/PlantVillage', num_clients=5, batch_size=32, iid=False):
+def load_federated_data(data_dir='data/PlantVillage', num_clients=5, batch_size=32, iid=False, alpha=0.5):
     """
     Partitions the dataset for Federated Learning.
     If iid=True: Random uniform split (Easy Mode).
-    If iid=False: Non-IID split where each client gets entirely different diseases (Hard Mode).
+    If iid=False: Non-IID split using Dirichlet distribution (Realistic Hard Mode).
     """
     train_loader, val_loader, classes = load_centralized_data(data_dir, batch_size=batch_size)
     
-    # We extract the underlying base dataset and the specific training indices
     base_dataset = train_loader.dataset.dataset
     train_indices = train_loader.dataset.indices
     
@@ -56,38 +55,36 @@ def load_federated_data(data_dir='data/PlantVillage', num_clients=5, batch_size=
             client_loaders.append(DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=2))
             
     else:
-        print("Dataset Mode: Non-IID (Heterogeneous label distribution)")
+        print(f"Dataset Mode: Non-IID (Dirichlet Distribution, alpha={alpha})")
         # 1. Map each class to the training images that belong to it
         class_to_indices = {i: [] for i in range(len(classes))}
         for idx in train_indices:
             label = base_dataset.targets[idx]
             class_to_indices[label].append(idx)
             
-        # 2. Assign exactly 3 distinct disease classes to each of the 5 clients
-        classes_per_client = len(classes) // num_clients
+        # 2. Distribute each class across clients using Dirichlet probabilities
+        client_indices = {i: [] for i in range(num_clients)}
         
-        for i in range(num_clients):
-            client_specific_indices = []
-            assigned_classes = range(i * classes_per_client, (i + 1) * classes_per_client)
+        for c in range(len(classes)):
+            c_indices = class_to_indices[c]
+            np.random.shuffle(c_indices)
             
-            for c in assigned_classes:
-                client_specific_indices.extend(class_to_indices[c])
+            # Draw random proportions for this class across all clients
+            proportions = np.random.dirichlet([alpha] * num_clients)
+            splits = (proportions * len(c_indices)).astype(int)
+            
+            start = 0
+            for i in range(num_clients):
+                end = start + splits[i]
+                if i == num_clients - 1:  # Ensure the last client gets the exact remainder
+                    end = len(c_indices)
+                client_indices[i].extend(c_indices[start:end])
+                start = end
                 
-            # Create a localized dataset just for this client
-            client_ds = Subset(base_dataset, client_specific_indices)
+        # 3. Create localized datasets
+        for i in range(num_clients):
+            np.random.shuffle(client_indices[i]) # Shuffle local client data
+            client_ds = Subset(base_dataset, client_indices[i])
             client_loaders.append(DataLoader(client_ds, batch_size=batch_size, shuffle=True, num_workers=2))
 
     return client_loaders, val_loader, classes
-
-if __name__ == "__main__":
-    # Test the new Non-IID distribution logic
-    print("Testing Non-IID Federated Partitions...")
-    client_loaders, _, classes = load_federated_data(num_clients=5, iid=False)
-    
-    print("\n--- Client Data Distribution ---")
-    for i, loader in enumerate(client_loaders):
-        # Extract labels to prove the Non-IID setup works
-        labels = [loader.dataset.dataset.targets[idx] for idx in loader.dataset.indices]
-        unique_classes = np.unique(labels)
-        class_names = [classes[c] for c in unique_classes]
-        print(f"Client {i+1} has {len(loader.dataset)} images handling diseases: {class_names}")

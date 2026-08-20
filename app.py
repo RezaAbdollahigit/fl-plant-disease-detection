@@ -4,8 +4,54 @@ from torchvision import transforms
 from PIL import Image
 from models.mobilenet import get_mobilenet
 import os
+import time
+import numpy as np
+import cv2
 
+# ==========================================
+# 🧠 EXPLAINABLE AI (Grad-CAM)
+# ==========================================
+class GradCAM:
+    """Hooks into the last convolutional layer to extract feature maps and gradients."""
+    def __init__(self, model):
+        self.model = model
+        self.gradients = None
+        self.activations = None
+        
+        # MobileNetV2's final convolutional block
+        target_layer = self.model.features[-1]
+        
+        # Register the hooks
+        target_layer.register_forward_hook(self.save_activation)
+        target_layer.register_backward_hook(self.save_gradient)
+
+    def save_activation(self, module, input, output):
+        self.activations = output
+
+    def save_gradient(self, module, grad_input, grad_output):
+        self.gradients = grad_output[0]
+
+    def generate_heatmap(self, input_tensor, target_class):
+        self.model.zero_grad()
+        input_tensor.requires_grad_(True)
+        
+        output = self.model(input_tensor)
+        target = output[0][target_class]
+        target.backward()
+
+        # Mathematically multiply the gradients by the feature maps
+        pooled_gradients = torch.mean(self.gradients, dim=[0, 2, 3])
+        for i in range(self.activations.shape[1]):
+            self.activations[:, i, :, :] *= pooled_gradients[i]
+            
+        heatmap = torch.mean(self.activations, dim=1).squeeze()
+        heatmap = torch.relu(heatmap)
+        heatmap /= torch.max(heatmap)
+        return heatmap.cpu().detach().numpy()
+
+# ==========================================
 # 1. Dataset Classes
+# ==========================================
 CLASS_NAMES = [
     'Pepper__bell___Bacterial_spot', 'Pepper__bell___healthy', 
     'Potato___Early_blight', 'Potato___Late_blight', 'Potato___healthy', 
@@ -16,7 +62,9 @@ CLASS_NAMES = [
     'Tomato_healthy'
 ]
 
-# 2. Load ALL Models (Cached so we don't crash your RAM)
+# ==========================================
+# 2. Load ALL Models (Cached)
+# ==========================================
 @st.cache_resource
 def load_all_models():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -33,7 +81,6 @@ def load_all_models():
         model.eval()
         return model
 
-    # Load the 3 distinct brains
     baseline_model = load_specific_model('baseline_model.pth')
     fedavg_model = load_specific_model('fedavg_model.pth')
     fedprox_model = load_specific_model('fedprox_model.pth')
@@ -42,7 +89,9 @@ def load_all_models():
 
 baseline, fedavg, fedprox, device = load_all_models()
 
+# ==========================================
 # 3. Image Preprocessing
+# ==========================================
 def preprocess_image(image):
     transform = transforms.Compose([
         transforms.Resize((224, 224)),
@@ -52,18 +101,46 @@ def preprocess_image(image):
     image = image.convert('RGB')
     return transform(image).unsqueeze(0).to(device)
 
+# ==========================================
 # 4. Standardized Inference Function
-def get_prediction(model, tensor):
-    with torch.no_grad():
+# ==========================================
+def get_prediction(model, tensor, original_image=None, use_gradcam=False):
+    # Latency Timer Start
+    start_time = time.time()
+    
+    if use_gradcam:
+        model.eval()
         outputs = model(tensor)
-        probabilities = torch.nn.functional.softmax(outputs[0], dim=0)
-        confidence, predicted_idx = torch.max(probabilities, 0)
-        
+    else:
+        with torch.no_grad():
+            outputs = model(tensor)
+            
+    probabilities = torch.nn.functional.softmax(outputs[0], dim=0)
+    confidence, predicted_idx = torch.max(probabilities, 0)
+    
+    # Latency Timer End
+    end_time = time.time()
+    latency_ms = round((end_time - start_time) * 1000, 2)
+    
     raw_class = CLASS_NAMES[predicted_idx.item()]
     clean_name = raw_class.replace("___", " - ").replace("__", " ").replace("_", " ")
     status = "Healthy" if "healthy" in raw_class.lower() else "Infected"
     
-    return clean_name, round(confidence.item() * 100, 2), status
+    # Generate the Visual Heatmap Overlay
+    final_image = original_image
+    if use_gradcam and original_image is not None:
+        cam = GradCAM(model)
+        heatmap = cam.generate_heatmap(tensor, predicted_idx.item())
+        
+        heatmap = cv2.resize(heatmap, (original_image.width, original_image.height))
+        heatmap = np.uint8(255 * heatmap)
+        heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
+        
+        original_np = np.array(original_image)
+        superimposed_img = cv2.addWeighted(original_np, 0.5, heatmap, 0.5, 0)
+        final_image = Image.fromarray(superimposed_img)
+
+    return clean_name, round(confidence.item() * 100, 2), status, latency_ms, final_image
 
 # ==========================================
 # 🖥️ UI LAYOUT & DASHBOARD
@@ -78,7 +155,6 @@ def main():
     uploaded_file = st.file_uploader("Choose a leaf image from the edge device...", type=["jpg", "jpeg", "png"])
 
     if uploaded_file is not None:
-        # Display the uploaded image
         image = Image.open(uploaded_file)
         col_img, col_empty = st.columns([1, 2])
         with col_img:
@@ -87,33 +163,35 @@ def main():
         if st.button("Run Comparative Inference", type="primary"):
             tensor = preprocess_image(image)
             
-            with st.spinner('Running multi-model GPU inference...'):
-                base_class, base_conf, base_stat = get_prediction(baseline, tensor)
-                avg_class, avg_conf, avg_stat = get_prediction(fedavg, tensor)
-                prox_class, prox_conf, prox_stat = get_prediction(fedprox, tensor)
+            with st.spinner('Running multi-model GPU inference and generating AI Heatmaps...'):
+                base_class, base_conf, base_stat, base_lat, base_img = get_prediction(baseline, tensor, image, use_gradcam=True)
+                avg_class, avg_conf, avg_stat, avg_lat, avg_img = get_prediction(fedavg, tensor, image, use_gradcam=True)
+                prox_class, prox_conf, prox_stat, prox_lat, prox_img = get_prediction(fedprox, tensor, image, use_gradcam=True)
             
             st.markdown("### 📊 Live Model Comparison")
             
-            # The 3-Way Split Screen
             col1, col2, col3 = st.columns(3)
             
-            # Column 1: The Gold Standard
             with col1:
                 st.info("**1. Centralized Baseline**\n\n*(The 'Gold Standard' with access to all data)*")
+                st.image(base_img, caption="AI Focus Heatmap", use_container_width=True)
                 st.metric(label="Predicted Disease", value=base_class)
                 st.metric(label="Confidence", value=f"{base_conf}%")
+                st.metric(label="Edge Latency", value=f"{base_lat} ms")
                 
-            # Column 2: The Broken System
             with col2:
                 st.warning("**2. Standard FedAvg**\n\n*(Suffers from Catastrophic Forgetting)*")
+                st.image(avg_img, caption="AI Focus Heatmap", use_container_width=True)
                 st.metric(label="Predicted Disease", value=avg_class)
                 st.metric(label="Confidence", value=f"{avg_conf}%", delta="- Broken / Confused" if avg_class != base_class else "Agrees with Baseline", delta_color="inverse" if avg_class != base_class else "normal")
+                st.metric(label="Edge Latency", value=f"{avg_lat} ms")
                 
-            # Column 3: The Solution
             with col3:
                 st.success("**3. FedProx (Proposed)**\n\n*(Stabilized via Proximal Penalty)*")
+                st.image(prox_img, caption="AI Focus Heatmap", use_container_width=True)
                 st.metric(label="Predicted Disease", value=prox_class)
                 st.metric(label="Confidence", value=f"{prox_conf}%", delta="Corrected Alignment" if prox_class == base_class and avg_class != base_class else None)
+                st.metric(label="Edge Latency", value=f"{prox_lat} ms")
 
 if __name__ == "__main__":
     main()
