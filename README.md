@@ -1,4 +1,3 @@
-```
 ## 🌿 Federated Learning for Plant Disease Detection
 
 A robust, distributed machine learning architecture designed to classify 15 categories of plant diseases using edge-device simulation. This project evaluates the performance of standard FedAvg against the FedProx proximal penalty algorithm under simulated hardware failures and severe non-IID data distributions (Dirichlet $ \alpha = 0.1 $).
