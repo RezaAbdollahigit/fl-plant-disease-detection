@@ -1,15 +1,22 @@
 # Federated Learning Framework
 flwr==1.8.0
 
-# Data Science & Machine Learning Core
+# Deep Learning Core
+torch
+torchvision
+
+# Data Science & Analytics
 numpy
+pandas
 scikit-learn
 
-# Computer Vision & Image Processing
+# Computer Vision & Visualization
 opencv-python
 matplotlib
+seaborn
 Pillow
 
-# Development & Visualization
+# Development & Dashboarding
 jupyter
 tqdm
+streamlit
