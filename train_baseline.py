@@ -7,19 +7,26 @@ import numpy as np
 from sklearn.utils.class_weight import compute_class_weight
 import os
 import time
+import random
+
+# 1. ENFORCE DETERMINISTIC SEEDS GLOBALLY
+torch.manual_seed(42)
+np.random.seed(42)
+random.seed(42)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(42)
 
 def train_baseline(epochs=5):
-    # 1. Setup GPU Device
+    # 2. Setup GPU Device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"🚀 Training starting on: {device}")
 
-    # 2. Load Data
+    # 3. Load Data
     print("Loading dataset...")
     train_loader, val_loader, classes = load_centralized_data(batch_size=32)
     
-    # 3. Calculate Weighted Loss for Imbalanced Data
+    # 4. Calculate Weighted Loss for Imbalanced Data
     print("Calculating class weights (Optimized)...")
-    # INSTANT FIX: Read labels from metadata without loading images into RAM
     all_labels = [train_loader.dataset.dataset.targets[i] for i in train_loader.dataset.indices]
     
     class_weights = compute_class_weight(
@@ -29,12 +36,12 @@ def train_baseline(epochs=5):
     )
     weights_tensor = torch.tensor(class_weights, dtype=torch.float).to(device)
     
-    # 4. Initialize Model, Loss, and Optimizer
+    # 5. Initialize Model, Loss, and Optimizer
     model = get_mobilenet(num_classes=len(classes)).to(device)
     criterion = nn.CrossEntropyLoss(weight=weights_tensor)
     optimizer = optim.Adam(model.parameters(), lr=0.001)
 
-    # 5. The Training Loop
+    # 6. The Training Loop
     start_time = time.time()
     for epoch in range(epochs):
         print(f"\n--- Epoch {epoch+1}/{epochs} ---")
@@ -65,7 +72,7 @@ def train_baseline(epochs=5):
         epoch_loss = running_loss / len(train_loader)
         print(f"✅ Epoch {epoch+1} Completed | Train Accuracy: {train_acc:.2f}% | Avg Loss: {epoch_loss:.4f}")
 
-    # 6. Evaluate on Unseen Validation Data
+    # 7. Evaluate on Unseen Validation Data
     print("\n🔍 Evaluating Baseline on Validation Set...")
     model.eval()
     val_correct = 0
@@ -81,7 +88,7 @@ def train_baseline(epochs=5):
     val_acc = 100 * val_correct / val_total
     print(f"🏆 True Baseline Validation Accuracy: {val_acc:.2f}%")
 
-    # 7. Save the Final Global Model
+    # 8. Save the Final Global Model
     os.makedirs('results', exist_ok=True)
     save_path = 'results/baseline_model.pth'
     torch.save(model.state_dict(), save_path)

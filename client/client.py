@@ -7,13 +7,14 @@ from tqdm import tqdm
 import random
 
 class PlantClient(fl.client.NumPyClient):
-    def __init__(self, model, trainloader, valloader, device, mu=0.0, dp_noise=0.0):
+    def __init__(self, model, trainloader, valloader, device, mu=0.0, dp_noise=0.0, local_epochs=5):
         self.model = model
         self.trainloader = trainloader
         self.valloader = valloader
         self.device = device
         self.mu = mu          
         self.dp_noise = dp_noise  
+        self.local_epochs = local_epochs # Added realistic IoT local computation
         self.criterion = nn.CrossEntropyLoss()
 
     def get_parameters(self, config):
@@ -39,37 +40,40 @@ class PlantClient(fl.client.NumPyClient):
             work_fraction = 1.0 
             
         max_batches = max(1, int(len(self.trainloader) * work_fraction))
-        progress_bar = tqdm(self.trainloader, desc=f"Client Local Training (Work: {int(work_fraction*100)}%)", leave=False)
         
-        for i, (images, labels) in enumerate(progress_bar):
-            if i >= max_batches:
-                break
+        # Train for multiple LOCAL EPOCHS before syncing with the global server
+        for epoch in range(self.local_epochs):
+            progress_bar = tqdm(self.trainloader, desc=f"Local Epoch {epoch+1}/{self.local_epochs} (Work: {int(work_fraction*100)}%)", leave=False)
+            
+            for i, (images, labels) in enumerate(progress_bar):
+                if i >= max_batches:
+                    break
+                    
+                images, labels = images.to(self.device), labels.to(self.device)
+                optimizer.zero_grad()
                 
-            images, labels = images.to(self.device), labels.to(self.device)
-            optimizer.zero_grad()
-            
-            outputs = self.model(images)
-            loss = self.criterion(outputs, labels)
-            
-            if self.mu > 0.0:
-                proximal_term = 0.0
-                for local_param, global_param in zip(self.model.parameters(), global_weights):
-                    proximal_term += ((local_param - global_param.to(self.device)) ** 2).sum()
-                loss += (self.mu / 2) * proximal_term
-            
-            loss.backward()
+                outputs = self.model(images)
+                loss = self.criterion(outputs, labels)
+                
+                if self.mu > 0.0:
+                    proximal_term = 0.0
+                    for local_param, global_param in zip(self.model.parameters(), global_weights):
+                        proximal_term += ((local_param - global_param.to(self.device)) ** 2).sum()
+                    loss += (self.mu / 2) * proximal_term
+                
+                loss.backward()
 
-            if self.dp_noise > 0.0:
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-                for param in self.model.parameters():
-                    if param.grad is not None:
-                        noise = torch.normal(mean=0.0, std=self.dp_noise, size=param.grad.shape).to(self.device)
-                        param.grad += noise
+                if self.dp_noise > 0.0:
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                    for param in self.model.parameters():
+                        if param.grad is not None:
+                            noise = torch.normal(mean=0.0, std=self.dp_noise, size=param.grad.shape).to(self.device)
+                            param.grad += noise
+                
+                optimizer.step()
+                progress_bar.set_postfix(loss=f"{loss.item():.4f}")
             
-            optimizer.step()
-            progress_bar.set_postfix(loss=f"{loss.item():.4f}")
-            
-        actual_samples_processed = max_batches * self.trainloader.batch_size
+        actual_samples_processed = max_batches * self.trainloader.batch_size * self.local_epochs
         return self.get_parameters(config={}), actual_samples_processed, {}
 
     def evaluate(self, parameters, config):

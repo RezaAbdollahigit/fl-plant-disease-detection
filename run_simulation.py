@@ -2,6 +2,7 @@ import os
 import logging
 import argparse
 import json
+import random
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
@@ -10,7 +11,15 @@ os.environ['RAY_DISABLE_MEMORY_MONITOR'] = '1'
 import flwr as fl
 from flwr.common import parameters_to_ndarrays
 import torch
+import numpy as np
 from collections import OrderedDict
+
+# 1. ENFORCE DETERMINISTIC SEEDS GLOBALLY
+torch.manual_seed(42)
+np.random.seed(42)
+random.seed(42)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(42)
 
 logging.getLogger("flwr").setLevel(logging.ERROR)
 

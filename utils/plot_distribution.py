@@ -3,14 +3,12 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 
-# Dynamically add the project root to Python's path so it can find 'utils'
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from utils.dataset import load_federated_data
 
 def plot_data_distribution():
     print("Generating Dirichlet data distribution proof...")
     
-    # Keeping your 5-client architecture as requested!
     client_loaders, _, classes = load_federated_data(num_clients=5, batch_size=32, iid=False, alpha=0.1)
     
     num_clients = len(client_loaders)
