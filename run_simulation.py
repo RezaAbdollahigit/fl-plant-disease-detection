@@ -14,7 +14,6 @@ import torch
 import numpy as np
 from collections import OrderedDict
 
-# 1. ENFORCE DETERMINISTIC SEEDS GLOBALLY
 torch.manual_seed(42)
 np.random.seed(42)
 random.seed(42)
@@ -28,7 +27,7 @@ from utils.dataset import load_federated_data
 from models.mobilenet import get_mobilenet
 
 def save_global_model(parameters, filename, num_classes):
-    print(f"\n💾 Intercepting global weights and saving to results/{filename}...")
+    print(f"\n💾 Saving model checkpoint to results/{filename}...")
     ndarrays = parameters_to_ndarrays(parameters)
     model = get_mobilenet(num_classes=num_classes)
     params_dict = zip(model.state_dict().keys(), ndarrays)
@@ -36,23 +35,24 @@ def save_global_model(parameters, filename, num_classes):
     model.load_state_dict(state_dict, strict=True)
     os.makedirs('results', exist_ok=True)
     torch.save(model.state_dict(), f'results/{filename}')
-    print("✅ Save complete!\n")
 
 def weighted_average(metrics):
     accuracies = [num_examples * m["accuracy"] for num_examples, m in metrics]
     examples = [num_examples for num_examples, _ in metrics]
     return {"accuracy": sum(accuracies) / sum(examples)}
 
+def weighted_average_train(metrics):
+    losses = [num_examples * m["train_loss"] for num_examples, m in metrics]
+    examples = [num_examples for num_examples, _ in metrics]
+    return {"train_loss": sum(losses) / sum(examples)}
+
 def get_custom_strategy(algo, num_rounds, num_clients, num_classes, mu):
     if algo == "fedprox":
         class SaveModelFedProx(fl.server.strategy.FedProx):
             def aggregate_fit(self, server_round, results, failures):
-                print(f"\n==============================================")
-                print(f"🌍 GLOBAL ROUND {server_round} / {num_rounds} COMPLETE")
-                print(f"==============================================\n")
                 agg_params, agg_metrics = super().aggregate_fit(server_round, results, failures)
-                if agg_params is not None and server_round == num_rounds:
-                    save_global_model(agg_params, "fedprox_model.pth", num_classes)
+                if agg_params is not None:
+                    save_global_model(agg_params, f"{algo}_model_round_{server_round}.pth", num_classes)
                 return agg_params, agg_metrics
         return SaveModelFedProx(
             fraction_fit=0.8, 
@@ -60,24 +60,23 @@ def get_custom_strategy(algo, num_rounds, num_clients, num_classes, mu):
             min_fit_clients=4, 
             min_available_clients=num_clients, 
             proximal_mu=mu, 
-            evaluate_metrics_aggregation_fn=weighted_average
+            evaluate_metrics_aggregation_fn=weighted_average,
+            fit_metrics_aggregation_fn=weighted_average_train
         )
     else:
         class SaveModelFedAvg(fl.server.strategy.FedAvg):
             def aggregate_fit(self, server_round, results, failures):
-                print(f"\n==============================================")
-                print(f"🌍 GLOBAL ROUND {server_round} / {num_rounds} COMPLETE")
-                print(f"==============================================\n")
                 agg_params, agg_metrics = super().aggregate_fit(server_round, results, failures)
-                if agg_params is not None and server_round == num_rounds:
-                    save_global_model(agg_params, "fedavg_model.pth", num_classes)
+                if agg_params is not None:
+                    save_global_model(agg_params, f"{algo}_model_round_{server_round}.pth", num_classes)
                 return agg_params, agg_metrics
         return SaveModelFedAvg(
             fraction_fit=0.8, 
             fraction_evaluate=1.0, 
             min_fit_clients=4, 
             min_available_clients=num_clients,
-            evaluate_metrics_aggregation_fn=weighted_average
+            evaluate_metrics_aggregation_fn=weighted_average,
+            fit_metrics_aggregation_fn=weighted_average_train
         )
 
 if __name__ == "__main__":
@@ -106,7 +105,7 @@ if __name__ == "__main__":
         mu_value = args.mu if args.algo == "fedprox" else 0.0
         return PlantClient(model, train_loader, val_loader, device, mu=mu_value, dp_noise=args.dp).to_client()
 
-    print(f"\n🚀 Starting {args.rounds} Rounds using {args.algo.upper()} (DP: {args.dp})...")
+    print(f"\n🚀 Starting {args.rounds} Rounds using {args.algo.upper()}...")
     strategy = get_custom_strategy(args.algo, args.rounds, args.clients, num_classes, args.mu)
 
     history = fl.simulation.start_simulation(
@@ -120,9 +119,15 @@ if __name__ == "__main__":
     os.makedirs('results', exist_ok=True)
     metrics_path = f"results/{args.algo}_metrics.json"
     
-    losses = [item[1] for item in history.losses_distributed] if history.losses_distributed else []
-    accuracies = [item[1] for item in history.metrics_distributed.get("accuracy", [])] if "accuracy" in history.metrics_distributed else []
+    # 🕵️ Detective Fix: Extract ALL three metrics
+    val_losses = [item[1] for item in history.losses_distributed] if history.losses_distributed else []
+    val_accuracies = [item[1] for item in history.metrics_distributed.get("accuracy", [])] if "accuracy" in history.metrics_distributed else []
+    train_losses = [item[1] for item in history.metrics_distributed_fit.get("train_loss", [])] if "train_loss" in history.metrics_distributed_fit else []
     
     with open(metrics_path, "w") as f:
-        json.dump({"loss": losses, "accuracy": accuracies}, f)
+        json.dump({
+            "train_loss": train_losses, 
+            "val_loss": val_losses, 
+            "val_accuracy": val_accuracies
+        }, f)
     print(f"📊 Training metrics saved to {metrics_path}")

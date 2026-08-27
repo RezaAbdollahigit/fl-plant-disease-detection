@@ -97,8 +97,8 @@ def load_all_models():
         return model
 
     baseline_model = load_specific_model('baseline_model.pth')
-    fedavg_model = load_specific_model('fedavg_model.pth')
-    fedprox_model = load_specific_model('fedprox_model.pth')
+    fedavg_model = load_specific_model('fedavg_model_round_25.pth')
+    fedprox_model = load_specific_model('fedprox_model_round_25.pth')
     
     return baseline_model, fedavg_model, fedprox_model, device
 
@@ -146,7 +146,7 @@ def get_prediction(model, tensor, original_image=None, use_gradcam=False):
     if use_gradcam and original_image is not None:
         cam = GradCAM(model)
         heatmap = cam.generate_heatmap(tensor, predicted_idx.item())
-        cam.remove_hooks() # Prevent PyTorch hook accumulation
+        cam.remove_hooks() 
         
         heatmap = cv2.resize(heatmap, (original_image.width, original_image.height))
         heatmap = np.uint8(255 * heatmap)
@@ -167,8 +167,8 @@ def get_prediction(model, tensor, original_image=None, use_gradcam=False):
 def main():
     st.set_page_config(page_title="FL Defense Dashboard", page_icon="🌿", layout="wide")
 
-    st.title("🌿 Federated Learning vs. Centralized AI")
-    st.write("Upload a single edge-device image to compare the performance of standard FedAvg against the FedProx proximal penalty under heavily isolated (Non-IID) data conditions.")
+    st.title("🌿 Edge Diagnostics: FedAvg vs. FedProx")
+    st.write("Upload a single edge-device image to evaluate catastrophic forgetting in standard FedAvg and the stabilizing power of the FedProx proximal penalty.")
     st.markdown("---")
 
     uploaded_file = st.file_uploader("Choose a leaf image from the edge device...", type=["jpg", "jpeg", "png"])

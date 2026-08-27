@@ -14,7 +14,7 @@ class PlantClient(fl.client.NumPyClient):
         self.device = device
         self.mu = mu          
         self.dp_noise = dp_noise  
-        self.local_epochs = local_epochs # Added realistic IoT local computation
+        self.local_epochs = local_epochs 
         self.criterion = nn.CrossEntropyLoss()
 
     def get_parameters(self, config):
@@ -33,7 +33,6 @@ class PlantClient(fl.client.NumPyClient):
         self.model.train()
         optimizer = optim.Adam(self.model.parameters(), lr=0.001)
         
-        # 🌪️ Edge Simulation: 20% chance of hardware/straggler failure
         if random.random() < 0.2:
             work_fraction = random.uniform(0.1, 0.4) 
         else:
@@ -41,7 +40,9 @@ class PlantClient(fl.client.NumPyClient):
             
         max_batches = max(1, int(len(self.trainloader) * work_fraction))
         
-        # Train for multiple LOCAL EPOCHS before syncing with the global server
+        total_train_loss = 0.0 
+        total_steps = 0
+        
         for epoch in range(self.local_epochs):
             progress_bar = tqdm(self.trainloader, desc=f"Local Epoch {epoch+1}/{self.local_epochs} (Work: {int(work_fraction*100)}%)", leave=False)
             
@@ -53,15 +54,21 @@ class PlantClient(fl.client.NumPyClient):
                 optimizer.zero_grad()
                 
                 outputs = self.model(images)
-                loss = self.criterion(outputs, labels)
                 
+                # 1. Calculate Pure Predictive Error (Cross-Entropy)
+                ce_loss = self.criterion(outputs, labels)
+                
+                # 2. Add the Proximal Penalty for OPTIMIZATION ONLY
                 if self.mu > 0.0:
                     proximal_term = 0.0
                     for local_param, global_param in zip(self.model.parameters(), global_weights):
                         proximal_term += ((local_param - global_param.to(self.device)) ** 2).sum()
-                    loss += (self.mu / 2) * proximal_term
+                    optimization_loss = ce_loss + (self.mu / 2) * proximal_term
+                else:
+                    optimization_loss = ce_loss
                 
-                loss.backward()
+                # 3. Backpropagate the penalized loss (The Engine)
+                optimization_loss.backward()
 
                 if self.dp_noise > 0.0:
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
@@ -71,10 +78,16 @@ class PlantClient(fl.client.NumPyClient):
                             param.grad += noise
                 
                 optimizer.step()
-                progress_bar.set_postfix(loss=f"{loss.item():.4f}")
+                
+                # 4. Log ONLY the pure Cross-Entropy (The Dashboard)
+                total_train_loss += ce_loss.item() 
+                total_steps += 1
+                progress_bar.set_postfix(loss=f"{ce_loss.item():.4f}")
             
         actual_samples_processed = max_batches * self.trainloader.batch_size * self.local_epochs
-        return self.get_parameters(config={}), actual_samples_processed, {}
+        avg_train_loss = total_train_loss / total_steps if total_steps > 0 else 0.0 
+        
+        return self.get_parameters(config={}), actual_samples_processed, {"train_loss": avg_train_loss}
 
     def evaluate(self, parameters, config):
         self.set_parameters(parameters)
