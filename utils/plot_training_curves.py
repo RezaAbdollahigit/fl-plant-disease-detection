@@ -21,7 +21,6 @@ def main():
 
     rounds = list(range(1, len(fedavg_data['train_loss']) + 1))
 
-    # Set up matplotlib style for presentation clarity
     plt.style.use('seaborn-v0_8-whitegrid' if 'seaborn-v0_8-whitegrid' in plt.style.available else 'default')
     fig, axes = plt.subplots(1, 3, figsize=(18, 5), dpi=300)
 

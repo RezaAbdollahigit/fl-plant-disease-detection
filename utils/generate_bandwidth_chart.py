@@ -34,7 +34,7 @@ def generate_bandwidth_chart():
     # 4. Titles and Formatting
     plt.title('Network Bandwidth Consumption\n(Centralized vs. Federated Approach)', fontsize=14, pad=20)
     plt.ylabel('Total Data Transmitted (Megabytes)', fontsize=12)
-    plt.ylim(0, 28000) # Give headroom for the text labels
+    plt.ylim(0, 28000)
     plt.grid(axis='y', linestyle='--', alpha=0.7)
 
     # 5. Save the Chart

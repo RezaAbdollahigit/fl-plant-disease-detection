@@ -119,7 +119,6 @@ if __name__ == "__main__":
     os.makedirs('results', exist_ok=True)
     metrics_path = f"results/{args.algo}_metrics.json"
     
-    # 🕵️ Detective Fix: Extract ALL three metrics
     val_losses = [item[1] for item in history.losses_distributed] if history.losses_distributed else []
     val_accuracies = [item[1] for item in history.metrics_distributed.get("accuracy", [])] if "accuracy" in history.metrics_distributed else []
     train_losses = [item[1] for item in history.metrics_distributed_fit.get("train_loss", [])] if "train_loss" in history.metrics_distributed_fit else []

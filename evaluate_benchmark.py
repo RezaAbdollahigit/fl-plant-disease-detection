@@ -104,13 +104,13 @@ def main():
         cm_avg = confusion_matrix(results['Standard FedAvg']['y_true'], results['Standard FedAvg']['y_pred'], normalize='true')
         cm_prox = confusion_matrix(results['FedProx (Proposed)']['y_true'], results['FedProx (Proposed)']['y_pred'], normalize='true')
 
-        sns.heatmap(cm_avg, ax=axes[0], cmap='Blues', cbar=False, xticklabels=False, yticklabels=False)
-        axes[0].set_title('Standard FedAvg (Round 25) - Normalized CM', fontsize=13, fontweight='bold')
+        sns.heatmap(cm_avg, ax=axes[0], cmap='Blues', cbar=True, xticklabels=False, yticklabels=False)
+        axes[0].set_title('Standard FedAvg - Normalized', fontsize=13, fontweight='bold')
         axes[0].set_xlabel('Predicted Label')
         axes[0].set_ylabel('True Label')
 
         sns.heatmap(cm_prox, ax=axes[1], cmap='Greens', cbar=True, xticklabels=False, yticklabels=False)
-        axes[1].set_title('FedProx (Proposed, Round 25) - Normalized CM', fontsize=13, fontweight='bold')
+        axes[1].set_title('FedProx (Proposed) - Normalized', fontsize=13, fontweight='bold')
         axes[1].set_xlabel('Predicted Label')
         axes[1].set_ylabel('True Label')
 

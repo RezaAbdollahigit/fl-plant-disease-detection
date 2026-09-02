@@ -7,6 +7,11 @@ from tqdm import tqdm
 import random
 
 class PlantClient(fl.client.NumPyClient):
+    """
+    Federated Learning Client for Plant Disease Detection.
+    Implements local training, straggler simulation, FedProx proximal term, 
+    and Differential Privacy (DP-SGD) at the client level.
+    """
     def __init__(self, model, trainloader, valloader, device, mu=0.0, dp_noise=0.0, local_epochs=5):
         self.model = model
         self.trainloader = trainloader
@@ -27,24 +32,27 @@ class PlantClient(fl.client.NumPyClient):
 
     def fit(self, parameters, config):
         self.set_parameters(parameters)
+        
+        # Clone global weights for FedProx proximal term computation
         global_weights = [param.clone().detach() for param in self.model.parameters()]
         
         self.model.to(self.device)
         self.model.train()
         optimizer = optim.Adam(self.model.parameters(), lr=0.001)
         
-        if random.random() < 0.2:
-            work_fraction = random.uniform(0.1, 0.4) 
-        else:
-            work_fraction = 1.0 
-            
+        # Simulate systems heterogeneity (Stragglers)
+        work_fraction = random.uniform(0.1, 0.4) if random.random() < 0.2 else 1.0 
         max_batches = max(1, int(len(self.trainloader) * work_fraction))
         
         total_train_loss = 0.0 
         total_steps = 0
         
         for epoch in range(self.local_epochs):
-            progress_bar = tqdm(self.trainloader, desc=f"Local Epoch {epoch+1}/{self.local_epochs} (Work: {int(work_fraction*100)}%)", leave=False)
+            progress_bar = tqdm(
+                self.trainloader, 
+                desc=f"Local Epoch {epoch+1}/{self.local_epochs} | Workload: {int(work_fraction*100)}%", 
+                leave=False
+            )
             
             for i, (images, labels) in enumerate(progress_bar):
                 if i >= max_batches:
@@ -55,10 +63,10 @@ class PlantClient(fl.client.NumPyClient):
                 
                 outputs = self.model(images)
                 
-                # 1. Calculate Pure Predictive Error (Cross-Entropy)
+                # Compute standard cross-entropy loss
                 ce_loss = self.criterion(outputs, labels)
                 
-                # 2. Add the Proximal Penalty for OPTIMIZATION ONLY
+                # Apply FedProx proximal penalty if mu > 0
                 if self.mu > 0.0:
                     proximal_term = 0.0
                     for local_param, global_param in zip(self.model.parameters(), global_weights):
@@ -67,19 +75,23 @@ class PlantClient(fl.client.NumPyClient):
                 else:
                     optimization_loss = ce_loss
                 
-                # 3. Backpropagate the penalized loss (The Engine)
                 optimization_loss.backward()
 
+                # Apply Differential Privacy (Gradient Clipping and Noise Injection)
                 if self.dp_noise > 0.0:
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                     for param in self.model.parameters():
                         if param.grad is not None:
-                            noise = torch.normal(mean=0.0, std=self.dp_noise, size=param.grad.shape).to(self.device)
+                            noise = torch.normal(
+                                mean=0.0, 
+                                std=self.dp_noise, 
+                                size=param.grad.shape
+                            ).to(self.device)
                             param.grad += noise
                 
                 optimizer.step()
                 
-                # 4. Log ONLY the pure Cross-Entropy (The Dashboard)
+                # Accumulate pure cross-entropy loss for logging and evaluation
                 total_train_loss += ce_loss.item() 
                 total_steps += 1
                 progress_bar.set_postfix(loss=f"{ce_loss.item():.4f}")
@@ -102,8 +114,10 @@ class PlantClient(fl.client.NumPyClient):
             for images, labels in self.valloader:
                 images, labels = images.to(self.device), labels.to(self.device)
                 outputs = self.model(images)
+                
                 loss += self.criterion(outputs, labels).item()
                 _, predicted = torch.max(outputs.data, 1)
+                
                 total += labels.size(0)
                 correct += (predicted == labels).sum().item()
                 

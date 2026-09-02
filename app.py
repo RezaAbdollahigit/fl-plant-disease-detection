@@ -21,7 +21,7 @@ class GradCAM:
         # MobileNetV2's final convolutional block
         target_layer = self.model.features[-1]
         
-        # Register the hooks and keep handles so we can safely remove them later
+        # Register the hooks and keep handles to be able to safely remove them later
         self.forward_handle = target_layer.register_forward_hook(self.save_activation)
         self.backward_handle = target_layer.register_full_backward_hook(self.save_gradient)
 
@@ -151,7 +151,7 @@ def get_prediction(model, tensor, original_image=None, use_gradcam=False):
         heatmap = cv2.resize(heatmap, (original_image.width, original_image.height))
         heatmap = np.uint8(255 * heatmap)
         
-        # OpenCV uses BGR, but PIL uses RGB. We must convert colors!
+        # OpenCV uses BGR, but PIL uses RGB
         heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
         heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
         

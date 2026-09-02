@@ -21,7 +21,6 @@ def get_mobilenet(num_classes=15, pretrained=True):
     return model
 
 if __name__ == "__main__":
-    # Quick local test to verify the architecture loads correctly
     print("Building MobileNetV2 architecture...")
     
     try:
